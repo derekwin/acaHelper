@@ -8,7 +8,7 @@ import io
 st.set_page_config(page_title="DBLP 多会议论文筛选器", layout="wide")
 st.title("DBLP 论文筛选工具")
 
-# 会议选项
+# ========== 会议选项 ==========
 st.markdown("### 选择会议")
 conference_options = [
     "OSDI", "ATC", "EuroSys", "ASPLOS", "FAST", "SOSP", "ISCA",
@@ -16,44 +16,41 @@ conference_options = [
     "INFOCOM", "NSDI", "CoNEXT", "CCS", "S&P", "USENIX Security", "NDSS"
 ]
 
-# 全选按钮
-if 'select_all_confs' not in st.session_state:
-    st.session_state.select_all_confs = False
+# 一键全选会议
+if st.button("全选会议"):
+    selected_confs = conference_options.copy()
+else:
+    selected_confs = []
 
-if st.button("全选会议", key="all_confs_btn"):
-    st.session_state.select_all_confs = not st.session_state.select_all_confs
-
-selected_confs = []
 cols = st.columns(4)
 for idx, conf in enumerate(conference_options):
     with cols[idx % 4]:
-        if st.checkbox(conf, key=f"conf_{conf}", value=st.session_state.select_all_confs):
+        if st.checkbox(conf, key=conf, value=conf in selected_confs):
             selected_confs.append(conf)
 
-# 年份选项
+# ========== 年份选项 ==========
 st.markdown("### 选择年份")
 yearcount = 6
 current_year = datetime.now().year
 year_options = [str(y) for y in range(current_year, current_year - yearcount, -1)]
 
-if 'select_all_years' not in st.session_state:
-    st.session_state.select_all_years = False
+# 一键全选年份
+if st.button("全选年份"):
+    selected_years = year_options.copy()
+else:
+    selected_years = []
 
-if st.button("全选年份", key="all_years_btn"):
-    st.session_state.select_all_years = not st.session_state.select_all_years
-
-selected_years = []
 cols_year = st.columns(yearcount)
 for idx, year in enumerate(year_options):
     with cols_year[idx % yearcount]:
-        if st.checkbox(year, key=f"year_{year}", value=st.session_state.select_all_years):
+        if st.checkbox(year, key=year, value=year in selected_years):
             selected_years.append(year)
 
-# 输入关键词
+# ========== 输入关键词 ==========
 st.markdown("### 输入关键词")
 keywords = st.text_input("多个关键词请用英文逗号分隔：", "")
 
-# 构造 conf+year 对应的URL映射
+# ========== 构造 conf+year 对应的URL映射 ==========
 def build_conf_year_to_urls():
     mapping = {}
     for year in year_options:
@@ -87,7 +84,7 @@ def build_conf_year_to_urls():
 
 conf_year_to_urls = build_conf_year_to_urls()
 
-# 抓取单个页面
+# ========== 抓取单个页面 ==========
 def fetch_papers_from_url(conf, year, url):
     papers = []
     try:
@@ -102,8 +99,9 @@ def fetch_papers_from_url(conf, year, url):
             if not title_tag:
                 continue
             title = title_tag.text.strip()
+            title_lower = title.lower()  # <-- 这里把title也转小写了
 
-            title_lower = title.lower()
+            # 过滤掉无关条目
             if any(keyword in title_lower for keyword in ["symposium", "conference", "proceedings", "workshop"]) or conf.lower() in title_lower:
                 continue
 
@@ -114,7 +112,10 @@ def fetch_papers_from_url(conf, year, url):
                 if link and link.get('href'):
                     paper_url = link['href']
 
-            authors = [a.text.strip() for a in entry.find_all('span', itemprop='author')]
+            authors = []
+            author_tags = entry.find_all('span', itemprop='author')
+            for a in author_tags:
+                authors.append(a.text.strip())
 
             papers.append({
                 "conference": conf,
@@ -126,7 +127,6 @@ def fetch_papers_from_url(conf, year, url):
             })
     except Exception as e:
         st.error(f"❌ 抓取 {conf} {year} URL失败: {url}，错误：{e}")
-
     return papers
 
 # ========== 主逻辑 ==========
