@@ -3,12 +3,12 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import concurrent.futures
-import time
+import io
 
 st.set_page_config(page_title="DBLP 多会议论文筛选器", layout="wide")
 st.title("DBLP 论文筛选工具")
 
-# 会议选项
+# ========== 会议选项 ==========
 st.markdown("### 选择会议")
 conference_options = [
     "OSDI", "ATC", "EuroSys", "ASPLOS", "FAST", "SOSP", "ISCA",
@@ -16,44 +16,41 @@ conference_options = [
     "INFOCOM", "NSDI", "CoNEXT", "CCS", "S&P", "USENIX Security", "NDSS"
 ]
 
-# 全选按钮
-if 'select_all_confs' not in st.session_state:
-    st.session_state.select_all_confs = False
+# 一键全选会议
+if st.button("全选会议"):
+    selected_confs = conference_options.copy()
+else:
+    selected_confs = []
 
-if st.button("全选会议", key="all_confs_btn"):
-    st.session_state.select_all_confs = not st.session_state.select_all_confs
-
-selected_confs = []
 cols = st.columns(4)
 for idx, conf in enumerate(conference_options):
     with cols[idx % 4]:
-        if st.checkbox(conf, key=f"conf_{conf}", value=st.session_state.select_all_confs):
+        if st.checkbox(conf, key=conf, value=conf in selected_confs):
             selected_confs.append(conf)
 
-# 年份选项
+# ========== 年份选项 ==========
 st.markdown("### 选择年份")
 yearcount = 6
 current_year = datetime.now().year
 year_options = [str(y) for y in range(current_year, current_year - yearcount, -1)]
 
-if 'select_all_years' not in st.session_state:
-    st.session_state.select_all_years = False
+# 一键全选年份
+if st.button("全选年份"):
+    selected_years = year_options.copy()
+else:
+    selected_years = []
 
-if st.button("全选年份", key="all_years_btn"):
-    st.session_state.select_all_years = not st.session_state.select_all_years
-
-selected_years = []
 cols_year = st.columns(yearcount)
 for idx, year in enumerate(year_options):
     with cols_year[idx % yearcount]:
-        if st.checkbox(year, key=f"year_{year}", value=st.session_state.select_all_years):
+        if st.checkbox(year, key=year, value=year in selected_years):
             selected_years.append(year)
 
-# 输入关键词
+# ========== 输入关键词 ==========
 st.markdown("### 输入关键词")
 keywords = st.text_input("多个关键词请用英文逗号分隔：", "")
 
-# 构造 conf+year 对应的URL映射
+# ========== 构造 conf+year 对应的URL映射 ==========
 def build_conf_year_to_urls():
     mapping = {}
     for year in year_options:
@@ -87,7 +84,7 @@ def build_conf_year_to_urls():
 
 conf_year_to_urls = build_conf_year_to_urls()
 
-# 抓取单个页面
+# ========== 抓取单个页面 ==========
 def fetch_papers_from_url(conf, year, url):
     papers = []
     try:
@@ -102,8 +99,9 @@ def fetch_papers_from_url(conf, year, url):
             if not title_tag:
                 continue
             title = title_tag.text.strip()
+            title_lower = title.lower()  # <-- 这里把title也转小写了
 
-            title_lower = title.lower()
+            # 过滤掉无关条目
             if any(keyword in title_lower for keyword in ["symposium", "conference", "proceedings", "workshop"]) or conf.lower() in title_lower:
                 continue
 
@@ -114,7 +112,10 @@ def fetch_papers_from_url(conf, year, url):
                 if link and link.get('href'):
                     paper_url = link['href']
 
-            authors = [a.text.strip() for a in entry.find_all('span', itemprop='author')]
+            authors = []
+            author_tags = entry.find_all('span', itemprop='author')
+            for a in author_tags:
+                authors.append(a.text.strip())
 
             papers.append({
                 "conference": conf,
@@ -126,17 +127,16 @@ def fetch_papers_from_url(conf, year, url):
             })
     except Exception as e:
         st.error(f"❌ 抓取 {conf} {year} URL失败: {url}，错误：{e}")
-
     return papers
 
-# 主逻辑
+# ========== 主逻辑 ==========
 if st.button("开始搜索"):
     if not selected_confs or not selected_years:
         st.warning("请至少选择一个会议和一个年份")
     else:
         keyword_list = [kw.strip().lower() for kw in keywords.split(",") if kw.strip()]
         all_tasks = []
-
+        
         for conf in selected_confs:
             for year in selected_years:
                 urls = conf_year_to_urls.get((conf, year))
@@ -147,7 +147,7 @@ if st.button("开始搜索"):
                     all_tasks.append((conf, year, url))
 
         total_tasks = len(all_tasks)
-        progress_placeholder = st.empty()
+        progress_bar = st.progress(0)
         total_results = []
 
         with st.spinner("正在并发抓取论文..."):
@@ -155,27 +155,54 @@ if st.button("开始搜索"):
                 conf, year, url = task
                 return fetch_papers_from_url(conf, year, url)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {executor.submit(task_wrapper, task): task for task in all_tasks}
                 completed = 0
                 for future in concurrent.futures.as_completed(futures):
                     result = future.result()
                     total_results.extend(result)
                     completed += 1
-                    progress_placeholder.progress(min(completed / total_tasks, 1.0))
+                    progress_bar.progress(completed / total_tasks)
 
+        # 过滤关键词
         if total_results:
-            st.success(f"总共抓取到 {len(total_results)} 篇论文")
+            total_results_count = len(total_results)  
             if keyword_list:
-                filtered_results = []
-                for paper in total_results:
-                    title_lower = paper["title"].lower()
-                    if any(kw in title_lower for kw in keyword_list):
-                        filtered_results.append(paper)
+                filtered_results = [paper for paper in total_results if any(kw in paper["title"].lower() for kw in keyword_list)]
             else:
                 filtered_results = total_results
 
+            st.success(f"总共抓取到 {len(total_results)} 篇论文，筛选得到 {len(filtered_results)} 篇论文。")
+
             if filtered_results:
+                # 先生成 markdown 文本
+                markdown_output = "# 论文列表\n\n"
+                for idx, paper in enumerate(filtered_results, 1):
+                    authors = paper['authors']
+                    if len(authors) > 2:
+                        author_display = ', '.join(authors[:2]) + ", ... " + authors[-1]
+                    else:
+                        author_display = ', '.join(authors)
+
+                    markdown_output += f"## {idx}. {paper['title']}\n"
+                    markdown_output += f"- Conference: {paper['conference']} {paper['year']}\n"
+                    markdown_output += f"- Authors: {author_display}\n"
+                    markdown_output += f"- URL: [{paper['url']}]({paper['url']})\n\n"
+
+                # 准备下载的 buffer
+                buffer = io.StringIO()
+                buffer.write(markdown_output)
+                buffer.seek(0)
+
+                # 先显示下载按钮
+                st.download_button(
+                    label="📄 下载筛选结果 (Markdown)",
+                    data=buffer.getvalue(),
+                    file_name="papers.md",
+                    mime="text/markdown"
+                )
+
+                # 然后再显示具体的每篇论文
                 for idx, paper in enumerate(filtered_results, 1):
                     authors = paper['authors']
                     if len(authors) > 2:
@@ -192,5 +219,6 @@ if st.button("开始搜索"):
                         """, unsafe_allow_html=True)
             else:
                 st.info("没有符合关键词的论文。")
+
         else:
             st.info("未找到任何论文。")
