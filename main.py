@@ -129,96 +129,127 @@ def fetch_papers_from_url(conf, year, url):
 
     return papers
 
+# 初始化 session_state
+if 'raw_results' not in st.session_state:
+    st.session_state.raw_results = []
+
+if 'filtered_results' not in st.session_state:
+    st.session_state.filtered_results = []
+
+if 'last_selected_confs' not in st.session_state:
+    st.session_state.last_selected_confs = []
+
+if 'last_selected_years' not in st.session_state:
+    st.session_state.last_selected_years = []
+
+if 'last_keyword_input' not in st.session_state:
+    st.session_state.last_keyword_input = ""
+
 # ========== 主逻辑 ==========
-if st.button("开始搜索"):
+
+trigger = st.button("🔍 抓取并筛选论文")
+
+if trigger:
     if not selected_confs or not selected_years:
         st.warning("请至少选择一个会议和一个年份")
     else:
         keyword_list = [kw.strip().lower() for kw in keywords.split(",") if kw.strip()]
-        all_tasks = []
-        
-        for conf in selected_confs:
-            for year in selected_years:
-                urls = conf_year_to_urls.get((conf, year))
-                if not urls:
-                    st.error(f"未找到 {conf} {year} 的 URL，请补充到 conf_year_to_urls 中。")
-                    continue
-                for url in urls:
-                    all_tasks.append((conf, year, url))
+        st.session_state.last_keyword_input = keywords
 
-        total_tasks = len(all_tasks)
-        progress_bar = st.progress(0)
-        total_results = []
+        # 判断是否需要重新抓取
+        if selected_confs != st.session_state.last_selected_confs or selected_years != st.session_state.last_selected_years:
+            st.session_state.last_selected_confs = selected_confs
+            st.session_state.last_selected_years = selected_years
+            st.session_state.raw_results.clear()
 
-        with st.spinner("正在并发抓取论文..."):
-            def task_wrapper(task):
-                conf, year, url = task
-                return fetch_papers_from_url(conf, year, url)
+            all_tasks = []
+            for conf in selected_confs:
+                for year in selected_years:
+                    urls = conf_year_to_urls.get((conf, year))
+                    if not urls:
+                        st.error(f"未找到 {conf} {year} 的 URL，请补充到 conf_year_to_urls 中。")
+                        continue
+                    for url in urls:
+                        all_tasks.append((conf, year, url))
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-                futures = {executor.submit(task_wrapper, task): task for task in all_tasks}
-                completed = 0
-                for future in concurrent.futures.as_completed(futures):
-                    result = future.result()
-                    total_results.extend(result)
-                    completed += 1
-                    progress_bar.progress(completed / total_tasks)
+            total_tasks = len(all_tasks)
+            progress_bar = st.progress(0)
+            with st.spinner("正在并发抓取论文..."):
+                def task_wrapper(task):
+                    conf, year, url = task
+                    return fetch_papers_from_url(conf, year, url)
 
-        # 过滤关键词
-        if total_results:
-            total_results_count = len(total_results)  
-            if keyword_list:
-                filtered_results = [paper for paper in total_results if any(kw in paper["title"].lower() for kw in keyword_list)]
-            else:
-                filtered_results = total_results
+                total_results = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                    futures = {executor.submit(task_wrapper, task): task for task in all_tasks}
+                    completed = 0
+                    for future in concurrent.futures.as_completed(futures):
+                        result = future.result()
+                        total_results.extend(result)
+                        completed += 1
+                        progress_bar.progress(completed / total_tasks)
 
-            st.success(f"总共抓取到 {len(total_results)} 篇论文，筛选得到 {len(filtered_results)} 篇论文。")
-
-            if filtered_results:
-                # 先生成 markdown 文本
-                markdown_output = "# 论文列表\n\n"
-                for idx, paper in enumerate(filtered_results, 1):
-                    authors = paper['authors']
-                    if len(authors) > 2:
-                        author_display = ', '.join(authors[:2]) + ", ... " + authors[-1]
-                    else:
-                        author_display = ', '.join(authors)
-
-                    markdown_output += f"## {idx}. {paper['title']}\n"
-                    markdown_output += f"- Conference: {paper['conference']} {paper['year']}\n"
-                    markdown_output += f"- Authors: {author_display}\n"
-                    markdown_output += f"- URL: [{paper['url']}]({paper['url']})\n\n"
-
-                # 准备下载的 buffer
-                buffer = io.StringIO()
-                buffer.write(markdown_output)
-                buffer.seek(0)
-
-                # 先显示下载按钮
-                st.download_button(
-                    label="📄 下载筛选结果 (Markdown)",
-                    data=buffer.getvalue(),
-                    file_name="papers.md",
-                    mime="text/markdown"
-                )
-
-                # 然后再显示具体的每篇论文
-                for idx, paper in enumerate(filtered_results, 1):
-                    authors = paper['authors']
-                    if len(authors) > 2:
-                        author_display = ', '.join(authors[:2]) + ", ... " + authors[-1]
-                    else:
-                        author_display = ', '.join(authors)
-
-                    st.markdown(
-                        f"""
-                        <div style="border:1px solid #ccc; padding: 10px; border-radius: 5px; margin-top: 10px;">
-                            <strong style="font-size: 20px;">{idx}. {paper['title']}</strong><br>
-                            <span style="color: red;">{paper['conference']} {paper['year']}</span> by <span style="color: green;">[{author_display}]</span> from <a href="{paper['url']}">{paper['url']}</a><br>
-                        </div>
-                        """, unsafe_allow_html=True)
-            else:
-                st.info("没有符合关键词的论文。")
-
+            st.session_state.raw_results = total_results
         else:
-            st.info("未找到任何论文。")
+            st.info("会议和年份未变化，使用缓存的抓取结果")
+
+        # 关键词筛选
+        if st.session_state.raw_results:
+            if keyword_list:
+                st.session_state.filtered_results = [
+                    paper for paper in st.session_state.raw_results
+                    if any(kw in paper["title"].lower() for kw in keyword_list)
+                ]
+            else:
+                st.session_state.filtered_results = st.session_state.raw_results
+        else:
+            st.warning("抓取失败或无论文数据")
+
+# 显示结果
+if st.session_state.filtered_results:
+    total = len(st.session_state.raw_results)
+    filtered = len(st.session_state.filtered_results)
+    st.success(f"总论文数：{total}，关键词筛选后剩余：{filtered}")
+
+    # 下载按钮
+    markdown_output = "# 论文列表\n\n"
+    for idx, paper in enumerate(st.session_state.filtered_results, 1):
+        authors = paper['authors']
+        if len(authors) > 2:
+            author_display = ', '.join(authors[:2]) + ", ... " + authors[-1]
+        else:
+            author_display = ', '.join(authors)
+
+        markdown_output += f"## {idx}. {paper['title']}\n"
+        markdown_output += f"- Conference: {paper['conference']} {paper['year']}\n"
+        markdown_output += f"- Authors: {author_display}\n"
+        markdown_output += f"- URL: [{paper['url']}]({paper['url']})\n\n"
+
+    buffer = io.StringIO()
+    buffer.write(markdown_output)
+    buffer.seek(0)
+
+    st.download_button(
+        label="📄 下载筛选结果 (Markdown)",
+        data=buffer.getvalue(),
+        file_name="papers.md",
+        mime="text/markdown"
+    )
+
+    # 展示每篇论文
+    for idx, paper in enumerate(st.session_state.filtered_results, 1):
+        authors = paper['authors']
+        if len(authors) > 2:
+            author_display = ', '.join(authors[:2]) + ", ... " + authors[-1]
+        else:
+            author_display = ', '.join(authors)
+
+        st.markdown(
+            f"""
+            <div style="border:1px solid #ccc; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                <strong style="font-size: 20px;">{idx}. {paper['title']}</strong><br>
+                <span style="color: red;">{paper['conference']} {paper['year']}</span> by <span style="color: green;">[{author_display}]</span> from <a href="{paper['url']}">{paper['url']}</a><br>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
