@@ -13,7 +13,7 @@ st.markdown("### 选择会议")
 conference_options = [
     "OSDI", "ATC", "EuroSys", "ASPLOS", "FAST", "SOSP", "ISCA",
     "SC", "HPCA", "DAC", "MICRO", "SIGCOMM", "MobiCom",
-    "INFOCOM", "NSDI", "CoNEXT", "CCS", "S&P", "USENIX Security", "NDSS"
+    "INFOCOM", "NSDI", "CoNEXT", "CCS", "S&P", "USENIX Security", "NDSS", "PPoPP"
 ]
 
 # 全选按钮
@@ -83,6 +83,7 @@ def build_conf_year_to_urls():
         mapping[("S&P", year)] = [f"https://dblp.org/db/conf/sp/sp{year}.html"]
         mapping[("USENIX Security", year)] = [f"https://dblp.org/db/conf/uss/uss{year}.html"]
         mapping[("NDSS", year)] = [f"https://dblp.org/db/conf/ndss/ndss{year}.html"]
+        mapping[("PPoPP", year)] = [f"https://dblp.org/db/conf/ppopp/ppopp{year}.html"]
     return mapping
 
 conf_year_to_urls = build_conf_year_to_urls()
@@ -206,11 +207,10 @@ if trigger:
             st.warning("抓取失败或无论文数据")
 
 # 显示结果
+total = len(st.session_state.raw_results)
+filtered = len(st.session_state.filtered_results)
+st.success(f"总论文数：{total}，关键词筛选后剩余：{filtered}")
 if st.session_state.filtered_results:
-    total = len(st.session_state.raw_results)
-    filtered = len(st.session_state.filtered_results)
-    st.success(f"总论文数：{total}，关键词筛选后剩余：{filtered}")
-
     # 下载按钮
     markdown_output = "# 论文列表\n\n"
     for idx, paper in enumerate(st.session_state.filtered_results, 1):

@@ -67,7 +67,7 @@ def main():
     # 侧边栏：主题选择
     st.sidebar.header("选择主题")
     themes = sorted(df['theme'].unique().tolist())
-    selected = st.sidebar.multiselect("主题", themes, default=themes)
+    selected = st.sidebar.multiselect("主题", themes, default=[])
     if not selected:
         st.info("请选择至少一个主题进行展示。")
         return
